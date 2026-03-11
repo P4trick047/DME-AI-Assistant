@@ -1,27 +1,24 @@
 # ============================================================
 # DME AI Assistant — Python Dependencies
-# Install with: pip install -r requirements.txt
+# Compatible with Python 3.10 – 3.13
+# Install: pip install -r requirements.txt
 # ============================================================
 
-# Core ML
-torch
-transformers
-sentence-transformers
-
-# LangChain ecosystem
+# ── LangChain ecosystem (modern split packages) ──────────────
 langchain
+langchain-core
 langchain-community
 langchain-ollama
 langchain-chroma
+langchain-text-splitters
 
-# Vector database
+# ── Vector database ──────────────────────────────────────────
 chromadb
 
-# Web interface
-streamlit
-streamlit-authenticator
+# ── Web interface ────────────────────────────────────────────
+streamlit>=1.32.0
 
-# Document processing
+# ── Document processing ──────────────────────────────────────
 pypdf
 pandas
 openpyxl
@@ -29,7 +26,12 @@ pytesseract
 Pillow
 PyMuPDF
 
-# Utilities
+# ── Core ML ──────────────────────────────────────────────────
+torch
+transformers
+sentence-transformers
+
+# ── Utilities ────────────────────────────────────────────────
 python-dotenv
 pydantic
 tiktoken

@@ -1,0 +1,39 @@
+name: CI — Lint & Unit Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest flake8
+
+      - name: Lint with flake8
+        run: |
+          flake8 src/ config/ app.py \
+            --max-line-length=100 \
+            --ignore=E501,W503 \
+            --exclude=__pycache__
+
+      - name: Run billing tools tests (no Ollama needed)
+        run: python tests/test_tools.py
+
+      - name: Check imports
+        run: |
+          python -c "from src.billing_tools import HCPCSLookupTool, ClaimValidatorTool, DenialAnalyzerTool; print('✅ imports OK')"

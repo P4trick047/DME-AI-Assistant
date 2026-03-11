@@ -1,0 +1,36 @@
+# ============================================================
+# DME AI Assistant — Python Dependencies
+# Install with: pip install -r requirements.txt
+# ============================================================
+
+# Core ML
+torch
+transformers
+sentence-transformers
+
+# LangChain ecosystem
+langchain
+langchain-community
+langchain-ollama
+langchain-chroma
+
+# Vector database
+chromadb
+
+# Web interface
+streamlit
+streamlit-authenticator
+
+# Document processing
+pypdf
+pandas
+openpyxl
+pytesseract
+Pillow
+PyMuPDF
+
+# Utilities
+python-dotenv
+pydantic
+tiktoken
+requests

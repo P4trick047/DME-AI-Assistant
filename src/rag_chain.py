@@ -1,28 +1,28 @@
 # ============================================================
 # src/rag_chain.py
-# Core RAG pipeline: Question → Retrieve → Augment → Generate
+# RAG pipeline using modern LangChain LCEL (v0.2+)
+# Replaces deprecated ConversationalRetrievalChain
 # ============================================================
 
 import logging
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_ollama import OllamaLLM
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
-from langchain.prompts import PromptTemplate
 
+from config.settings import (
+    DEFAULT_MODEL,
+    LLM_CONTEXT_WINDOW,
+    LLM_MAX_TOKENS,
+    LLM_TEMPERATURE,
+)
 from src.vector_store import DMEVectorStore
-from config.settings import DEFAULT_MODEL, LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_CONTEXT_WINDOW
 
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# SYSTEM PROMPT
-# This defines the AI's expertise, tone, and behavior.
-# Customise this for your specific billing operation.
-# ============================================================
-
-DME_SYSTEM_PROMPT = """You are an expert DME (Durable Medical Equipment) medical billing \
+SYSTEM_PROMPT = """You are an expert DME (Durable Medical Equipment) medical billing \
 assistant with deep knowledge of:
 
 - Medicare and Medicaid DME billing rules and regulations
@@ -36,35 +36,33 @@ assistant with deep knowledge of:
 - Medicare's capped rental program (13-month rule)
 - DMEPOS supplier standards and accreditation
 
-When answering questions:
-1. Be specific — cite billing codes, modifier requirements, or policy references when available
-2. If information comes from the provided documents, mention the source filename
-3. If you are unsure, say so clearly — accuracy is critical in medical billing
-4. Format billing codes clearly (e.g., HCPCS: E0601, Modifier: KX)
-5. For compliance or legal questions, recommend consulting a compliance officer
-6. Structure longer answers with clear headings when helpful
+Rules:
+1. Be specific — cite billing codes, modifier requirements, or policy references when available.
+2. If information comes from the provided context, mention the source filename.
+3. If you are unsure, say so — accuracy is critical in medical billing.
+4. Format billing codes clearly (e.g., HCPCS: E0601, Modifier: KX).
+5. For compliance or legal questions, recommend consulting a compliance officer.
 
-Use the following context retrieved from billing documentation:
-{context}
+Retrieved context from billing documentation:
+{context}"""
 
-Chat history:
-{chat_history}
 
-Question: {question}
-
-Answer:"""
+def _format_docs(docs) -> str:
+    if not docs:
+        return "No relevant documents found in the knowledge base."
+    parts = []
+    for doc in docs:
+        fn = doc.metadata.get("filename", "unknown")
+        page = doc.metadata.get("page", "")
+        loc = f" (page {page})" if page else ""
+        parts.append(f"[Source: {fn}{loc}]\n{doc.page_content}")
+    return "\n\n---\n\n".join(parts)
 
 
 class DMERAGChain:
     """
-    The main RAG pipeline.
-
-    Flow:
-      User question
-        → vector search for relevant doc chunks
-        → inject chunks + question into LLM prompt
-        → LLM generates a grounded answer
-        → answer + source docs returned
+    RAG pipeline using LangChain LCEL (v0.2+ compatible).
+    Uses in-memory chat history list instead of deprecated ConversationBufferMemory.
     """
 
     def __init__(
@@ -77,87 +75,74 @@ class DMERAGChain:
     ):
         self.vector_store = vector_store
         self.model_name = model_name
+        self.retrieval_k = retrieval_k
+        self.chat_history: List = []
 
-        logger.info(f"Initializing LLM: {model_name}")
-
+        logger.info(f"Initialising LLM: {model_name}")
         self.llm = OllamaLLM(
             model=model_name,
             temperature=temperature,
             num_predict=max_tokens,
             num_ctx=LLM_CONTEXT_WINDOW,
         )
-
-        # ConversationBufferMemory stores the last N message pairs
-        # so the AI can reference earlier parts of the conversation
-        self.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True,
-            output_key="answer",
-            input_key="question",
-        )
-
-        self.prompt = PromptTemplate(
-            input_variables=["context", "chat_history", "question"],
-            template=DME_SYSTEM_PROMPT,
-        )
-
-        self._build_chain(retrieval_k)
+        self._build_chain()
         logger.info(f"RAG chain ready — model: {model_name}")
 
-    def _build_chain(self, k: int) -> None:
-        self.chain = ConversationalRetrievalChain.from_llm(
-            llm=self.llm,
-            retriever=self.vector_store.get_retriever(k=k),
-            memory=self.memory,
-            combine_docs_chain_kwargs={"prompt": self.prompt},
-            return_source_documents=True,
-            verbose=False,
+    def _build_chain(self) -> None:
+        self.retriever = self.vector_store.get_retriever(k=self.retrieval_k)
+        self.prompt = ChatPromptTemplate.from_messages([
+            ("system", SYSTEM_PROMPT),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{question}"),
+        ])
+        self.chain = (
+            {
+                "context": lambda x: _format_docs(self.retriever.invoke(x["question"])),
+                "chat_history": lambda x: x["chat_history"],
+                "question": lambda x: x["question"],
+            }
+            | self.prompt
+            | self.llm
+            | StrOutputParser()
         )
 
-    # ── Public API ───────────────────────────────────────────
-
     def ask(self, question: str) -> Dict[str, Any]:
-        """
-        Ask a question. Returns answer + source documents used.
-
-        Returns:
-            {
-                "answer":  "The model's response...",
-                "sources": [List[Document]],
-                "model":   "llama3"
-            }
-        """
         try:
-            response = self.chain.invoke({"question": question})
-            return {
-                "answer": response["answer"],
-                "sources": response.get("source_documents", []),
-                "model": self.model_name,
-            }
+            sources = self.retriever.invoke(question)
+        except Exception:
+            sources = []
+
+        try:
+            answer = self.chain.invoke({
+                "question": question,
+                "chat_history": self.chat_history,
+            })
         except ConnectionError:
             return {
-                "answer": (
-                    "⚠️ Cannot connect to Ollama. "
-                    "Please run `ollama serve` in a terminal and try again."
-                ),
+                "answer": "⚠️ Cannot connect to Ollama. Run `ollama serve` and try again.",
                 "sources": [],
                 "model": self.model_name,
             }
         except Exception as e:
             logger.error(f"RAG chain error: {e}", exc_info=True)
             return {
-                "answer": f"⚠️ An error occurred: {str(e)}",
+                "answer": f"⚠️ Error: {str(e)}",
                 "sources": [],
                 "model": self.model_name,
             }
 
+        self.chat_history.append(HumanMessage(content=question))
+        self.chat_history.append(AIMessage(content=answer))
+        if len(self.chat_history) > 20:
+            self.chat_history = self.chat_history[-20:]
+
+        return {"answer": answer, "sources": sources, "model": self.model_name}
+
     def clear_memory(self) -> None:
-        """Reset conversation history."""
-        self.memory.clear()
+        self.chat_history = []
         logger.info("Conversation memory cleared")
 
     def switch_model(self, model_name: str) -> None:
-        """Hot-swap the underlying LLM (no restart needed)."""
         self.model_name = model_name
         self.llm = OllamaLLM(
             model=model_name,
@@ -165,8 +150,8 @@ class DMERAGChain:
             num_predict=LLM_MAX_TOKENS,
             num_ctx=LLM_CONTEXT_WINDOW,
         )
-        self._build_chain(k=4)
+        self._build_chain()
         logger.info(f"Switched to model: {model_name}")
 
     def get_chat_history(self) -> List:
-        return self.memory.chat_memory.messages
+        return self.chat_history

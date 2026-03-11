@@ -10,7 +10,7 @@ import re
 from typing import Dict, List
 
 from langchain_ollama import OllamaLLM
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 
 from config.settings import DEFAULT_MODEL, LLM_CONTEXT_WINDOW
 

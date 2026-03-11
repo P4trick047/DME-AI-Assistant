@@ -14,8 +14,8 @@ import pandas as pd
 from pypdf import PdfReader
 from PIL import Image
 
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config.settings import CHUNK_SIZE, CHUNK_OVERLAP
 

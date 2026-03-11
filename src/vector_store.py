@@ -10,7 +10,7 @@ from typing import List, Optional, Tuple
 
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from config.settings import (
     CHROMA_PERSIST_DIR,

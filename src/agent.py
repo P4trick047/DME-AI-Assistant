@@ -6,8 +6,9 @@
 
 import logging
 from langchain.agents import AgentExecutor, create_react_agent
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_ollama import OllamaLLM
+from langchain_core.tools import BaseTool
 
 from src.billing_tools import HCPCSLookupTool, ClaimValidatorTool, DenialAnalyzerTool
 from src.vector_store import DMEVectorStore

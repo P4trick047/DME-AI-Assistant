@@ -14,6 +14,9 @@ from typing import Optional
 import streamlit as st
 
 from config.settings import (
+    USE_GROQ,
+    GROQ_API_KEY,
+    GROQ_MODEL,
     APP_TITLE,
     AVAILABLE_MODELS,
     DEFAULT_MODEL,
@@ -386,11 +389,12 @@ def main():
     render_sidebar()
 
     # Header
+    backend = "☁️ Groq (cloud)" if USE_GROQ else "💻 Ollama (local)"
     st.markdown(
         f"""
     <div class="header-box">
         <h1>🏥 {APP_TITLE}</h1>
-        <p>Powered by LLaMA 3 + RAG — Ask about HCPCS codes, CMNs, denials, billing rules & more</p>
+        <p>Powered by {backend} + RAG — Ask about HCPCS codes, CMNs, denials &amp; billing rules</p>
     </div>
     """,
         unsafe_allow_html=True,
@@ -399,10 +403,21 @@ def main():
     # Status strip
     c1, c2, c3, c4 = st.columns(4)
     vs = st.session_state.vector_store
-    c1.metric("Model", st.session_state.selected_model)
+    c1.metric("Model", GROQ_MODEL if USE_GROQ else st.session_state.selected_model)
     c2.metric("Knowledge Base", "✅ Loaded" if st.session_state.docs_loaded else "⚠️ Empty")
     c3.metric("Doc Chunks", vs.get_document_count() if vs else 0)
     c4.metric("Messages", len(st.session_state.messages))
+
+    # API key warning
+    if not USE_GROQ:
+        st.warning(
+            "⚠️ **No Groq API key found.** "
+            "The app needs a free Groq API key to work on Streamlit Cloud.  \n"
+            "1. Get a free key at [console.groq.com](https://console.groq.com)  \n"
+            "2. In Streamlit Cloud → your app → **Settings → Secrets** → add: `GROQ_API_KEY = \"gsk_...\"` \n"
+            "3. Redeploy the app.",
+            icon="🔑",
+        )
 
     st.markdown("---")
 

@@ -1,22 +1,25 @@
 # ============================================================
 # src/rag_chain.py
-# RAG pipeline using modern LangChain LCEL (v0.2+)
-# Replaces deprecated ConversationalRetrievalChain
+# RAG pipeline — works with Groq (cloud/free) OR Ollama (local)
+# Auto-detects which to use based on GROQ_API_KEY in .env
 # ============================================================
 
 import logging
+import os
 from typing import Any, Dict, List
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_ollama import OllamaLLM
 
 from config.settings import (
     DEFAULT_MODEL,
     LLM_CONTEXT_WINDOW,
     LLM_MAX_TOKENS,
     LLM_TEMPERATURE,
+    GROQ_API_KEY,
+    USE_GROQ,
+    GROQ_MODEL,
 )
 from src.vector_store import DMEVectorStore
 
@@ -59,34 +62,50 @@ def _format_docs(docs) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+def _build_llm():
+    """Return Groq LLM if API key is set, otherwise fall back to Ollama."""
+    if USE_GROQ and GROQ_API_KEY:
+        from langchain_groq import ChatGroq
+        logger.info(f"Using Groq cloud LLM: {GROQ_MODEL}")
+        return ChatGroq(
+            model=GROQ_MODEL,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+            groq_api_key=GROQ_API_KEY,
+        )
+    else:
+        from langchain_ollama import OllamaLLM
+        model = DEFAULT_MODEL
+        logger.info(f"Using local Ollama LLM: {model}")
+        return OllamaLLM(
+            model=model,
+            temperature=LLM_TEMPERATURE,
+            num_predict=LLM_MAX_TOKENS,
+            num_ctx=LLM_CONTEXT_WINDOW,
+        )
+
+
 class DMERAGChain:
     """
-    RAG pipeline using LangChain LCEL (v0.2+ compatible).
-    Uses in-memory chat history list instead of deprecated ConversationBufferMemory.
+    RAG pipeline — auto-switches between Groq (cloud) and Ollama (local).
+    Set GROQ_API_KEY in .env or Streamlit secrets to use Groq.
+    Leave it empty to use local Ollama.
     """
 
     def __init__(
         self,
         vector_store: DMEVectorStore,
         model_name: str = DEFAULT_MODEL,
-        temperature: float = LLM_TEMPERATURE,
-        max_tokens: int = LLM_MAX_TOKENS,
         retrieval_k: int = 4,
     ):
         self.vector_store = vector_store
-        self.model_name = model_name
+        self.model_name = GROQ_MODEL if USE_GROQ else model_name
         self.retrieval_k = retrieval_k
         self.chat_history: List = []
 
-        logger.info(f"Initialising LLM: {model_name}")
-        self.llm = OllamaLLM(
-            model=model_name,
-            temperature=temperature,
-            num_predict=max_tokens,
-            num_ctx=LLM_CONTEXT_WINDOW,
-        )
+        self.llm = _build_llm()
         self._build_chain()
-        logger.info(f"RAG chain ready — model: {model_name}")
+        logger.info(f"RAG chain ready — {'Groq' if USE_GROQ else 'Ollama'}: {self.model_name}")
 
     def _build_chain(self) -> None:
         self.retriever = self.vector_store.get_retriever(k=self.retrieval_k)
@@ -117,19 +136,23 @@ class DMERAGChain:
                 "question": question,
                 "chat_history": self.chat_history,
             })
-        except ConnectionError:
-            return {
-                "answer": "⚠️ Cannot connect to Ollama. Run `ollama serve` and try again.",
-                "sources": [],
-                "model": self.model_name,
-            }
         except Exception as e:
-            logger.error(f"RAG chain error: {e}", exc_info=True)
-            return {
-                "answer": f"⚠️ Error: {str(e)}",
-                "sources": [],
-                "model": self.model_name,
-            }
+            err = str(e)
+            logger.error(f"RAG chain error: {err}", exc_info=True)
+            if "groq" in err.lower() or "api_key" in err.lower():
+                return {
+                    "answer": (
+                        "⚠️ Groq API error. Check your GROQ_API_KEY in Streamlit secrets.\n"
+                        f"Details: {err}"
+                    ),
+                    "sources": [], "model": self.model_name,
+                }
+            if "connection" in err.lower() or "ollama" in err.lower():
+                return {
+                    "answer": "⚠️ Cannot connect to Ollama. Run `ollama serve` locally.",
+                    "sources": [], "model": self.model_name,
+                }
+            return {"answer": f"⚠️ Error: {err}", "sources": [], "model": self.model_name}
 
         self.chat_history.append(HumanMessage(content=question))
         self.chat_history.append(AIMessage(content=answer))
@@ -140,18 +163,11 @@ class DMERAGChain:
 
     def clear_memory(self) -> None:
         self.chat_history = []
-        logger.info("Conversation memory cleared")
 
     def switch_model(self, model_name: str) -> None:
         self.model_name = model_name
-        self.llm = OllamaLLM(
-            model=model_name,
-            temperature=LLM_TEMPERATURE,
-            num_predict=LLM_MAX_TOKENS,
-            num_ctx=LLM_CONTEXT_WINDOW,
-        )
+        self.llm = _build_llm()
         self._build_chain()
-        logger.info(f"Switched to model: {model_name}")
 
     def get_chat_history(self) -> List:
         return self.chat_history
